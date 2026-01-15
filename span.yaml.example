@@ -1,0 +1,31 @@
+# copy to span.yaml and customize
+
+model: claude-sonnet-4-20250514
+
+api_key_env: ANTHROPIC_API_KEY
+
+ignore:
+  - ".git"
+  - "__pycache__"
+  - ".venv"
+  - "node_modules"
+  - ".span"
+  - "build"
+  - "dist"
+
+verification:
+  syntax: true
+  ruff: true
+  mypy: false
+  mypy_full: true
+  pytest: true
+  pytest_args: ["-x", "--tb=short"]
+
+test_patterns:
+  - "tests/"
+  - "test_*.py"
+
+fallback_tests: []
+
+max_steps: 15
+max_retries_per_step: 3
