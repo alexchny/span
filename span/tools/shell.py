@@ -1,11 +1,17 @@
 import shlex
 import subprocess
-from typing import Any
+from typing import Any, TypedDict
 
 from span.models.tools import ToolResult
 from span.tools.base import Tool
 
-ALLOWED_PROGRAMS = {
+
+class ProgramRules(TypedDict):
+    allowed_flags: set[str]
+    allowed_positional: bool
+
+
+ALLOWED_PROGRAMS: dict[str, ProgramRules] = {
     "pytest": {
         "allowed_flags": {"-v", "-x", "-q", "--version", "--tb=short", "--tb=long", "--lf", "--ff"},
         "allowed_positional": True,
