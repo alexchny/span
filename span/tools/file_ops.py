@@ -147,8 +147,8 @@ class ApplyPatchTool(Tool):
         return True
 
     def _extract_hunks(self, patch: str) -> list[str]:
-        hunks = []
-        current_hunk = []
+        hunks: list[str] = []
+        current_hunk: list[str] = []
         in_hunk = False
 
         for line in patch.split("\n"):
