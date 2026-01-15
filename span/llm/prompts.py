@@ -8,7 +8,7 @@ MODE: PLAN ONLY
 Operating principles
 - Be technically precise and truthful. Don’t guess about the codebase; if you need context, say what you need to read first.
 - Optimize for correctness and minimal, targeted change.
-- Keep output short and CLI-friendly (no fluff, no hype, no emojis unless the user asked). 
+- Keep output short and CLI-friendly (no fluff, no hype, no emojis unless the user asked).
 
 What to produce (plain text, not JSON)
 Write a compact plan in 6–12 lines, using this structure:
