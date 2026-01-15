@@ -11,6 +11,7 @@ class RepoMap:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db_path = db_path
         self.conn = sqlite3.connect(str(db_path))
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -128,27 +129,43 @@ class RepoMap:
         cursor = self.conn.cursor()
         affected_tests = set()
 
-        pattern_conditions = " OR ".join(["source_file LIKE ?" for _ in test_patterns])
         query = f"""
             SELECT DISTINCT source_file
             FROM dependencies
             WHERE target_file IN ({','.join('?' * len(modified_files))})
-            AND ({pattern_conditions})
         """
 
-        params = modified_files + [f"%{pattern}%" for pattern in test_patterns]
-        cursor.execute(query, params)
+        cursor.execute(query, modified_files)
 
         for row in cursor.fetchall():
-            affected_tests.add(row[0])
+            source_file = row[0]
+            if not test_patterns or self._matches_test_pattern(source_file, test_patterns):
+                affected_tests.add(source_file)
 
         for modified_file in modified_files:
-            for pattern in test_patterns:
-                if pattern in modified_file:
-                    affected_tests.add(modified_file)
-                    break
+            if self._matches_test_pattern(modified_file, test_patterns):
+                affected_tests.add(modified_file)
 
         return sorted(affected_tests)
+
+    def _matches_test_pattern(self, file_path: str, test_patterns: list[str]) -> bool:
+        if not test_patterns:
+            return False
+
+        for pattern in test_patterns:
+            if pattern.endswith("/"):
+                if file_path.startswith(pattern):
+                    return True
+                if f"/{pattern}" in file_path:
+                    return True
+            else:
+                basename = file_path.split("/")[-1]
+                if basename.startswith(pattern):
+                    return True
+                if file_path.startswith(pattern):
+                    return True
+
+        return False
 
     def get_file_hash(self, file_path: str) -> str | None:
         cursor = self.conn.cursor()

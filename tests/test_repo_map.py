@@ -1,3 +1,4 @@
+import sqlite3
 import time
 from pathlib import Path
 
@@ -207,3 +208,70 @@ def test_repo_map_context_manager(tmp_path: Path) -> None:
         )
 
     assert db_path.exists()
+
+
+def test_foreign_key_enforcement(tmp_path: Path) -> None:
+    db_path = tmp_path / "repo.db"
+    repo_map = RepoMap(db_path)
+    cursor = repo_map.conn.cursor()
+
+    try:
+        cursor.execute(
+            "INSERT INTO imports (source_file, imported_module) VALUES (?, ?)",
+            ("nonexistent.py", "os")
+        )
+        repo_map.conn.commit()
+        raise AssertionError("Foreign key constraint should have prevented this insert")
+    except sqlite3.IntegrityError:
+        pass
+    finally:
+        repo_map.close()
+
+
+def test_find_affected_tests_empty_patterns(tmp_path: Path) -> None:
+    db_path = tmp_path / "repo.db"
+    repo_map = RepoMap(db_path)
+    timestamp = int(time.time())
+
+    repo_map.update_file("src/auth.py", "hash1", [], timestamp)
+    repo_map.update_file("tests/test_auth.py", "hash2", ["src.auth"], timestamp)
+    repo_map.resolve_dependencies(tmp_path)
+
+    affected = repo_map.find_affected_tests(["src/auth.py"], [])
+
+    assert "tests/test_auth.py" in affected
+    repo_map.close()
+
+
+def test_find_affected_tests_directory_pattern(tmp_path: Path) -> None:
+    db_path = tmp_path / "repo.db"
+    repo_map = RepoMap(db_path)
+    timestamp = int(time.time())
+
+    repo_map.update_file("src/module.py", "hash1", [], timestamp)
+    repo_map.update_file("tests/test_module.py", "hash2", ["src.module"], timestamp)
+    repo_map.update_file("my_tests/test_other.py", "hash3", ["src.module"], timestamp)
+    repo_map.resolve_dependencies(tmp_path)
+
+    affected = repo_map.find_affected_tests(["src/module.py"], ["tests/"])
+
+    assert "tests/test_module.py" in affected
+    assert "my_tests/test_other.py" not in affected
+    repo_map.close()
+
+
+def test_find_affected_tests_filename_pattern(tmp_path: Path) -> None:
+    db_path = tmp_path / "repo.db"
+    repo_map = RepoMap(db_path)
+    timestamp = int(time.time())
+
+    repo_map.update_file("src/module.py", "hash1", [], timestamp)
+    repo_map.update_file("test_module.py", "hash2", ["src.module"], timestamp)
+    repo_map.update_file("tests/my_test_file.py", "hash3", ["src.module"], timestamp)
+    repo_map.resolve_dependencies(tmp_path)
+
+    affected = repo_map.find_affected_tests(["src/module.py"], ["test_"])
+
+    assert "test_module.py" in affected
+    assert "tests/my_test_file.py" not in affected
+    repo_map.close()
