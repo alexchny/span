@@ -114,11 +114,18 @@ class ApplyPatchTool(Tool):
 
         strip_level = "1" if ("--- a/" in full_patch or "+++ b/" in full_patch) else "0"
 
-        result = subprocess.run(
-            ["patch", f"-p{strip_level}"],
-            input=full_patch.encode(),
-            capture_output=True,
-        )
+        try:
+            result = subprocess.run(
+                ["patch", f"-p{strip_level}"],
+                input=full_patch.encode(),
+                capture_output=True,
+            )
+        except FileNotFoundError:
+            return ApplyPatchResult(
+                success=False,
+                output="",
+                error="'patch' command not found. Please install patch utility.",
+            )
 
         if result.returncode == 0:
             return ApplyPatchResult(
@@ -130,13 +137,21 @@ class ApplyPatchTool(Tool):
         else:
             error_output = result.stderr.decode() if result.stderr else "Unknown error"
             stdout_output = result.stdout.decode() if result.stdout else ""
-            line_count = len(file_path.read_text().splitlines()) if file_path.exists() else 0
-            hint = f" (file has {line_count} lines)" if "No such line" in stdout_output else ""
+            line_count = self._safe_line_count(file_path)
+            hint = f" (file has {line_count} lines)" if "No such line" in stdout_output and line_count >= 0 else ""
             return ApplyPatchResult(
                 success=False,
                 output=f"{error_output}\n{stdout_output}".strip(),
                 error=f"Patch failed{hint}: {error_output or stdout_output}",
             )
+
+    def _safe_line_count(self, file_path: Path) -> int:
+        if not file_path.exists():
+            return -1
+        try:
+            return len(file_path.read_text().splitlines())
+        except (OSError, UnicodeDecodeError):
+            return -1
 
     def _extract_file_path(self, patch: str) -> Path | None:
         for line in patch.split("\n"):
