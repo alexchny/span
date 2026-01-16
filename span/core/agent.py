@@ -47,6 +47,8 @@ class AgentState:
     patch_attempt_count: int = 0
     last_errors: list[str] = field(default_factory=list)
     original_task: str = ""
+    _retry_count: dict = field(default_factory=dict)
+    _created_files: set = field(default_factory=set)
 
 
 class Agent:
@@ -75,10 +77,13 @@ class Agent:
     def run(self, task: str, show_plan: bool = False) -> AgentState:
         session_id = self._generate_session_id()
 
+        print("Planning...")
         plan = self._get_plan(task, session_id)
 
+        preview = self._format_plan_preview(plan)
+        print(f"\n{preview}\n")
+
         if show_plan:
-            print(f"\nPlan:\n{plan}\n")
             response = input("Proceed? [Y/n]: ").strip().lower()
             if response == "n":
                 return AgentState(session_id=session_id, messages=[], original_task=task)
@@ -120,6 +125,34 @@ class Agent:
 
         return plan
 
+    def _format_plan_preview(self, plan: str) -> str:
+        lines: list[str] = []
+        for line in plan.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+
+            clean = line.lstrip("123456)-•*# ").strip()
+            clean = clean.replace("**", "").strip()
+
+            if any(line.startswith(prefix) for prefix in ["1)", "2)", "3)", "4)", "5)", "6)", "-", "•", "*", "#"]):
+                if clean and len(lines) < 6 and not clean.lower().startswith(("plan", "goal", "approach")):
+                    lines.append(f"  • {clean}")
+            elif ":" in line:
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    clean = parts[1].strip().replace("**", "").strip()
+                    if clean and len(lines) < 6:
+                        lines.append(f"  • {clean}")
+
+        if not lines:
+            summary = " ".join(plan.split()[:50])
+            if len(summary) > 200:
+                summary = summary[:197] + "..."
+            return f"Plan:\n  • {summary}"
+
+        return "Plan:\n" + "\n".join(lines[:6])
+
     def _execute_loop(self, state: AgentState) -> None:
         tools = [
             self.read_file_tool.to_anthropic_tool(),
@@ -141,6 +174,8 @@ class Agent:
             )
 
             if not self.llm_client.has_tool_use(response):
+                if state.last_errors and not state.changes:
+                    print("\nAgent stopped after verification failures.")
                 break
 
             state.messages.append({"role": "assistant", "content": response.content})
@@ -202,6 +237,8 @@ class Agent:
         tool_input = tool_call["input"]
 
         if tool_name == "read_file":
+            path = tool_input.get("path", "file")
+            print(f"Reading {path}...")
             result = self.read_file_tool.execute(**tool_input)
             return result.to_content()
 
@@ -209,6 +246,8 @@ class Agent:
             return self._execute_patch_with_verification(tool_input, state)
 
         elif tool_name == "run_shell":
+            cmd = tool_input.get("command", "command")
+            print(f"Running {cmd}...")
             result = self.run_shell_tool.execute(**tool_input)
             return result.to_content()
 
@@ -218,12 +257,40 @@ class Agent:
     def _execute_patch_with_verification(
         self, tool_input: dict, state: AgentState
     ) -> list[dict[str, Any]]:
+        from pathlib import Path
+
         path = tool_input["path"]
         diff = tool_input["diff"]
+        file_path = Path(path)
+        is_new_file = not file_path.exists()
+
+        retry_count = state._retry_count.get(path, 0)
+        max_retries = self.limits.max_retries_per_patch
+
+        if retry_count >= max_retries:
+            print(f"  ✗ Max retries ({max_retries}) exceeded for {path}")
+            return [
+                {
+                    "type": "text",
+                    "text": f"ERROR: Exceeded {max_retries} retry attempts for {path}. Stop trying to patch this file and either try a completely different approach or report that you cannot complete the task.",
+                }
+            ]
+
+        if retry_count == 0:
+            print(f"Applying patch to {path}...")
+        else:
+            print(f"  Retrying {path}... ({retry_count + 1}/{max_retries})")
 
         apply_result = self.apply_patch_tool.execute(path=path, diff=diff)
 
         if not apply_result.success:
+            state._retry_count[path] = retry_count + 1
+            error_hint = apply_result.error or "unknown error"
+            if "No such line" in (apply_result.output or ""):
+                error_hint = "line count mismatch"
+            elif "FAILED" in (apply_result.output or ""):
+                error_hint = "hunk doesn't match file"
+            print(f"  ✗ Patch failed ({error_hint})")
             return [{"type": "text", "text": f"Error: {apply_result.error}"}]
 
         verification = self.verifier.verify_patch(path)
@@ -232,6 +299,10 @@ class Agent:
             if apply_result.reverse_diff is None:
                 return [{"type": "text", "text": "Error: Failed to generate reverse diff"}]
 
+            print("  ✓ Verified")
+            if is_new_file:
+                state._created_files.add(path)
+            state._retry_count.pop(path, None)
             state.changes.append(
                 ChangeOp(
                     path=path,
@@ -244,10 +315,15 @@ class Agent:
             return [
                 {
                     "type": "text",
-                    "text": "Patch applied and verified (syntax + lint + tests passed).",
+                    "text": f"SUCCESS: Patch to {path} applied and verified. Task complete - stop now and let the user review the changes.",
                 }
             ]
         else:
+            state._retry_count[path] = retry_count + 1
+            first_error = verification.errors[0] if verification.errors else "unknown"
+            short_error = first_error[:60] + "..." if len(first_error) > 60 else first_error
+            print(f"  ✗ Verification failed: {short_error}")
+
             if apply_result.reverse_diff:
                 revert_result = self.apply_patch_tool.execute(
                     path=path, diff=apply_result.reverse_diff
@@ -286,35 +362,39 @@ class Agent:
 
     def finalize(self, state: AgentState) -> bool:
         if not state.changes:
-            print("No changes made.")
             return False
 
         final_check = self.verifier.verify_final()
 
-        if not final_check.passed:
-            print(f"Final checks:\n{', '.join(final_check.errors)}")
+        self._show_diff(state.changes, state._created_files)
 
-        self._show_diff(state.changes)
+        if not final_check.passed:
+            print("\nNote: Some optional checks have warnings:")
+            for err in final_check.errors[:3]:
+                if "type annotation" in err.lower() or "no-untyped" in err:
+                    print("  - Consider adding type hints")
+                    break
+                else:
+                    short = err[:70] + "..." if len(err) > 70 else err
+                    print(f"  - {short}")
 
         response = input("\nKeep changes? [y/N]: ").strip().lower()
 
         if response == "y":
-            print("Changes kept.")
             state.changes.clear()
             return True
         else:
+            print("Reverting changes...")
             self.revert_all(state.changes)
-            print("Changes reverted.")
             return False
 
-    def _show_diff(self, changes: list[ChangeOp]) -> None:
-        print("\n" + "=" * 60)
-        print("CHANGES")
-        print("=" * 60)
+    def _show_diff(self, changes: list[ChangeOp], created_files: set | None = None) -> None:
+        print("\n" + "─" * 60)
+        created = created_files or set()
 
         for op in changes:
-            print(f"\n{op.path}")
-            print("-" * 60)
+            tag = " (new file)" if op.path in created else ""
+            print(f"\n{op.path}{tag}")
             print(op.forward_diff)
 
     def handle_revision(

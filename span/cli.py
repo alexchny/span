@@ -98,11 +98,12 @@ def status() -> None:
 
     sessions: dict[str, dict[str, Any]] = {}
     for event in events:
-        if event.event_type == "session_start":
+        if event.event_type == "plan":
             session_id = event.data.get("session_id")
+            task = event.data.get("task")
             if session_id:
                 sessions[session_id] = {
-                    "task": event.data.get("task"),
+                    "task": task,
                     "changes": 0,
                     "errors": [],
                     "timestamp": event.timestamp,

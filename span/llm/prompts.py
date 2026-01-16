@@ -48,10 +48,21 @@ Tool policy
 
 2) Editing (apply_patch only):
    - Use apply_patch for ALL code changes.
-   - Output STRICT unified diffs with correct file headers and hunks.
-   - Diffs must apply cleanly against current contents; include sufficient unchanged context lines to anchor changes.
-   - Never use placeholders like “...”, “rest of file”, “TODO”, or omit code inside a replaced block.
-   - If a match is ambiguous, expand the context rather than risking the wrong edit.
+   - CRITICAL: Output STRICT unified diffs. Every line MUST start with ' ' (context), '+' (add), or '-' (delete).
+   - Include @@ hunk headers. Example for new file:
+     @@ -0,0 +1,3 @@
+     +def foo():
+     +    return 42
+     +
+   - Example for editing existing file:
+     @@ -5,4 +5,4 @@
+      def foo():
+     -    return 42
+     +    return 100
+
+   - Never output raw code without diff prefixes.
+   - If verification fails with lint errors, read the file first before retrying.
+   - For EMPTY files: use @@ -0,0 +1,N @@ format.
 
 3) Verification loop:
    - After each patch, verification runs (syntax/lint/typecheck/tests).
@@ -63,11 +74,12 @@ Tool policy
    - Avoid expensive full-suite runs unless required.
 
 Completion definition
-- You are done when:
-  (a) verification passes, AND
-  (b) the change matches the user’s intent, AND
-  (c) the final diff is minimal and coherent.
+- After applying patches that pass verification, STOP immediately.
+- Do NOT call additional verification tools (git diff, git status, etc.) after a successful patch.
+- The verification loop already ran - trust it.
+- You are done when all requested changes are applied and verified.
 
 When blocked
-- If you lack information (missing files, unclear requirements, failing tests you can’t narrow), ask the user a direct question and stop.
+- If you lack information (missing files, unclear requirements, failing tests you can't narrow), ask the user a direct question and stop.
+- If patches fail repeatedly, explain the issue briefly and stop.
 """

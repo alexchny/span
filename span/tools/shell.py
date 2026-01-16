@@ -30,7 +30,7 @@ ALLOWED_PROGRAMS: dict[str, ProgramRules] = {
     },
     "git": {
         "allowed_flags": {"status", "diff", "log", "show"},
-        "allowed_positional": False,
+        "allowed_positional": True,
     },
 }
 

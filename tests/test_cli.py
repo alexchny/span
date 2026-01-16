@@ -263,7 +263,7 @@ def test_status_with_events(tmp_path: Path) -> None:
         with patch("span.cli.EventStream") as mock_stream:
             events = [
                 Event.create(
-                    "session_start", session_id="test123", task="Fix bug"
+                    "plan", session_id="test123", task="Fix bug", plan="1. Fix it"
                 ),
                 Event.create(
                     "tool_result",
