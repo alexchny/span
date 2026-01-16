@@ -1,3 +1,4 @@
+import logging
 import re
 import subprocess
 from pathlib import Path
@@ -5,6 +6,8 @@ from typing import Any
 
 from span.models.tools import ApplyPatchResult, ToolResult
 from span.tools.base import Tool
+
+logger = logging.getLogger(__name__)
 
 
 class ReadFileTool(Tool):
@@ -238,6 +241,12 @@ class ApplyPatchTool(Tool):
             return True
 
         if not has_deletions and context_before >= 1:
+            if context_before < 3:
+                logger.warning(
+                    "Accepting append-only patch with minimal context (%d line(s)). "
+                    "This may cause incorrect edits in repetitive code.",
+                    context_before,
+                )
             return True
 
         return False

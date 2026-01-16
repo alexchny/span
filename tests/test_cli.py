@@ -87,7 +87,7 @@ def test_run_with_full_flag(tmp_path: Path) -> None:
 def test_run_with_verbose_flag(tmp_path: Path) -> None:
     runner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path):
-        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}, clear=False):
             with patch("span.cli.load_config") as mock_load:
                 mock_config = Config()
                 mock_load.return_value = mock_config
@@ -106,9 +106,15 @@ def test_run_with_verbose_flag(tmp_path: Path) -> None:
                                     mock_agent_instance.run.return_value = mock_state
                                     mock_agent.return_value = mock_agent_instance
 
-                                    runner.invoke(cli, ["run", "--verbose", "Fix the bug"])
-
-                                    assert os.environ.get("SPAN_VERBOSE") == "1"
+                                    old_verbose = os.environ.pop("SPAN_VERBOSE", None)
+                                    try:
+                                        runner.invoke(cli, ["run", "--verbose", "Fix the bug"])
+                                        assert os.environ.get("SPAN_VERBOSE") == "1"
+                                    finally:
+                                        if old_verbose is not None:
+                                            os.environ["SPAN_VERBOSE"] = old_verbose
+                                        else:
+                                            os.environ.pop("SPAN_VERBOSE", None)
 
 
 def test_run_with_plan_flag(tmp_path: Path) -> None:
