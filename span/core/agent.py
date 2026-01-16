@@ -78,7 +78,7 @@ class Agent:
         plan = self._get_plan(task, session_id)
 
         if show_plan:
-            print(f"\n📋 Plan:\n{plan}\n")
+            print(f"\nPlan:\n{plan}\n")
             response = input("Proceed? [Y/n]: ").strip().lower()
             if response == "n":
                 return AgentState(session_id=session_id, messages=[], original_task=task)
@@ -129,7 +129,7 @@ class Agent:
 
         while True:
             if limit := self._check_limits(state):
-                print(f"⚠ Stopped: {limit} limit reached")
+                print(f"Stopped: {limit} limit reached")
                 break
 
             state.turn_count += 1
@@ -143,7 +143,7 @@ class Agent:
             if not self.llm_client.has_tool_use(response):
                 break
 
-            state.messages.append({"role": "assistant", "content": response})
+            state.messages.append({"role": "assistant", "content": response.content})
 
             tool_calls = self.llm_client.extract_tool_calls(response)
             tool_results = []
@@ -156,7 +156,7 @@ class Agent:
                     state.patch_attempt_count += 1
 
                 if limit := self._check_limits(state):
-                    print(f"⚠ Stopped: {limit} limit reached")
+                    print(f"Stopped: {limit} limit reached")
                     hit_limit = True
                     break
 
@@ -292,19 +292,19 @@ class Agent:
         final_check = self.verifier.verify_final()
 
         if not final_check.passed:
-            print(f"⚠ Final checks:\n{', '.join(final_check.errors)}")
+            print(f"Final checks:\n{', '.join(final_check.errors)}")
 
         self._show_diff(state.changes)
 
         response = input("\nKeep changes? [y/N]: ").strip().lower()
 
         if response == "y":
-            print("✓ Changes kept.")
+            print("Changes kept.")
             state.changes.clear()
             return True
         else:
             self.revert_all(state.changes)
-            print("✗ Changes reverted.")
+            print("Changes reverted.")
             return False
 
     def _show_diff(self, changes: list[ChangeOp]) -> None:
@@ -313,7 +313,7 @@ class Agent:
         print("=" * 60)
 
         for op in changes:
-            print(f"\n📝 {op.path}")
+            print(f"\n{op.path}")
             print("-" * 60)
             print(op.forward_diff)
 

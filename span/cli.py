@@ -65,6 +65,10 @@ def run_task(task: str, plan: bool, opus: bool, full: bool, verbose: bool) -> No
                     new_state = agent.handle_revision(state, revision, show_plan=plan)
                     if new_state.changes:
                         agent.finalize(new_state)
+                    else:
+                        click.echo("\nNo successful changes.")
+        else:
+            click.echo("\nNo successful changes.")
 
     except KeyboardInterrupt:
         click.echo("\n\nInterrupted by user", err=True)

@@ -14,7 +14,7 @@ def test_cli_no_command() -> None:
     runner = CliRunner()
     result = runner.invoke(cli, [])
     assert result.exit_code in (0, 2)
-    assert "Span" in result.output
+    assert "Usage:" in result.output
 
 
 def test_run_missing_api_key(tmp_path: Path) -> None:

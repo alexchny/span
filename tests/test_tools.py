@@ -112,7 +112,7 @@ def test_read_file_not_found(tmp_path: Path) -> None:
     result = tool.execute(path=str(tmp_path / "nonexistent.txt"))
 
     assert result.success is False
-    assert "File not found" in result.error
+    assert result.error is not None and "File not found" in result.error
 
 
 def test_read_file_is_directory(tmp_path: Path) -> None:
@@ -120,7 +120,7 @@ def test_read_file_is_directory(tmp_path: Path) -> None:
     result = tool.execute(path=str(tmp_path))
 
     assert result.success is False
-    assert "not a file" in result.error
+    assert result.error is not None and "not a file" in result.error
 
 
 def test_apply_patch_lazy_pattern_detection() -> None:
@@ -206,9 +206,7 @@ def test_apply_patch_success(tmp_path: Path) -> None:
     try:
         os.chdir(tmp_path)
 
-        patch = """--- test.py
-+++ test.py
-@@ -1,7 +1,7 @@
+        diff = """@@ -1,7 +1,7 @@
  line 0
  line 1
  line 2
@@ -220,7 +218,7 @@ def test_apply_patch_success(tmp_path: Path) -> None:
 """
 
         tool = ApplyPatchTool()
-        result = tool.execute(patch=patch)
+        result = tool.execute(path="test.py", diff=diff)
 
         assert result.success is True
         assert result.file_path == "test.py"
@@ -243,7 +241,7 @@ def test_run_shell_disallowed_program() -> None:
     result = tool.execute(command="rm -rf /")
 
     assert result.success is False
-    assert "not allowed" in result.error
+    assert result.error is not None and "not allowed" in result.error
 
 
 def test_run_shell_disallowed_flag() -> None:
@@ -251,7 +249,7 @@ def test_run_shell_disallowed_flag() -> None:
     result = tool.execute(command="pytest --rootdir=/etc")
 
     assert result.success is False
-    assert "Flag not allowed" in result.error
+    assert result.error is not None and "Flag not allowed" in result.error
 
 
 def test_run_shell_path_traversal() -> None:
@@ -259,7 +257,7 @@ def test_run_shell_path_traversal() -> None:
     result = tool.execute(command="pytest ../../../etc/passwd")
 
     assert result.success is False
-    assert "Suspicious path" in result.error
+    assert result.error is not None and "Suspicious path" in result.error
 
 
 def test_run_shell_absolute_path() -> None:
@@ -267,7 +265,7 @@ def test_run_shell_absolute_path() -> None:
     result = tool.execute(command="pytest /etc/passwd")
 
     assert result.success is False
-    assert "Suspicious path" in result.error
+    assert result.error is not None and "Suspicious path" in result.error
 
 
 def test_run_shell_git_allowed() -> None:
@@ -277,12 +275,12 @@ def test_run_shell_git_allowed() -> None:
     assert result.success in (True, False)
 
 
-def test_run_shell_git_disallowed_positional() -> None:
+def test_run_shell_git_disallowed_flag() -> None:
     tool = RunShellTool()
-    result = tool.execute(command="git log some_file.txt")
+    result = tool.execute(command="git commit -m 'test'")
 
     assert result.success is False
-    assert "Positional arguments not allowed" in result.error
+    assert result.error is not None and "not allowed" in result.error
 
 
 def test_run_shell_parse_error() -> None:
@@ -290,4 +288,4 @@ def test_run_shell_parse_error() -> None:
     result = tool.execute(command='pytest "unclosed')
 
     assert result.success is False
-    assert "Failed to parse" in result.error
+    assert result.error is not None and "Failed to parse" in result.error

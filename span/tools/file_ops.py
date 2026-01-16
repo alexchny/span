@@ -77,44 +77,45 @@ class ApplyPatchTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
-            "patch": {
+            "path": {
                 "type": "string",
-                "description": "Unified diff format patch with proper headers and context",
+                "description": "Path to the file to patch",
+                "required": True,
+            },
+            "diff": {
+                "type": "string",
+                "description": "Unified diff content (without file headers). Must include ≥3 context lines before OR after changes.",
                 "required": True,
             },
         }
 
     def execute(self, **kwargs: Any) -> ApplyPatchResult:
-        patch = kwargs["patch"]
+        file_path_str = kwargs["path"]
+        diff_content = kwargs["diff"]
+        file_path = Path(file_path_str)
 
-        file_path = self._extract_file_path(patch)
-        if not file_path:
-            return ApplyPatchResult(
-                success=False,
-                output="",
-                error="Could not extract file path from patch headers",
-            )
-
-        if not self._validate_patch(patch):
+        if not self._validate_patch(diff_content):
             return ApplyPatchResult(
                 success=False,
                 output="",
                 error="Patch validation failed: insufficient context lines or lazy patterns detected",
             )
 
-        reverse_diff = self._generate_reverse_diff(file_path, patch)
+        full_patch = f"--- {file_path_str}\n+++ {file_path_str}\n{diff_content}"
+
+        reverse_diff = self._generate_reverse_diff(file_path, full_patch)
 
         result = subprocess.run(
             ["patch", "-p0"],
-            input=patch.encode(),
+            input=full_patch.encode(),
             capture_output=True,
         )
 
         if result.returncode == 0:
             return ApplyPatchResult(
                 success=True,
-                output=f"Patch applied successfully to {file_path}",
-                file_path=str(file_path),
+                output=f"Patch applied successfully to {file_path_str}",
+                file_path=file_path_str,
                 reverse_diff=reverse_diff,
             )
         else:

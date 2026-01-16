@@ -25,12 +25,25 @@ class Tool(ABC):
         pass
 
     def to_anthropic_tool(self) -> dict[str, Any]:
+        properties = {}
+        required = []
+
+        for key, value in self.parameters.items():
+            param_def = {k: v for k, v in value.items() if k != "required"}
+            properties[key] = param_def
+            if value.get("required", False):
+                required.append(key)
+
+        schema: dict[str, Any] = {
+            "type": "object",
+            "properties": properties,
+        }
+
+        if required:
+            schema["required"] = required
+
         return {
             "name": self.name,
             "description": self.description,
-            "input_schema": {
-                "type": "object",
-                "properties": self.parameters,
-                "required": [k for k, v in self.parameters.items() if v.get("required", False)],
-            },
+            "input_schema": schema,
         }
