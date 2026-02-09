@@ -214,7 +214,7 @@ def test_execute_patch_apply_failure(tmp_path: Path) -> None:
         assert len(state.changes) == 0
 
 
-def test_execute_patch_no_reverse_diff(tmp_path: Path) -> None:
+def test_execute_patch_no_reverse_diff_existing_file(tmp_path: Path) -> None:
     config = Config()
     repo_map = MagicMock(spec=RepoMap)
     llm_client = MagicMock(spec=LLMClient)
@@ -226,6 +226,9 @@ def test_execute_patch_no_reverse_diff(tmp_path: Path) -> None:
     from span.core.agent import AgentState
     state = AgentState(session_id="test", messages=[])
 
+    existing_file = tmp_path / "test.py"
+    existing_file.write_text("old content")
+
     with patch.object(agent.apply_patch_tool, "execute") as mock_apply:
         mock_apply.return_value = MagicMock(
             success=True,
@@ -236,12 +239,47 @@ def test_execute_patch_no_reverse_diff(tmp_path: Path) -> None:
         with patch.object(agent.verifier, "verify_patch") as mock_verify:
             mock_verify.return_value = VerificationResult(passed=True, errors=[])
 
-            tool_input = {"path": "test.py", "diff": "+ new"}
+            tool_input = {"path": str(existing_file), "diff": "+ new"}
             result = agent._execute_patch_with_verification(tool_input, state)
 
             assert isinstance(result, list)
             assert "Failed to generate reverse diff" in result[0]["text"]
             assert len(state.changes) == 0
+
+
+def test_execute_patch_new_file_no_reverse_diff(tmp_path: Path) -> None:
+    config = Config()
+    repo_map = MagicMock(spec=RepoMap)
+    llm_client = MagicMock(spec=LLMClient)
+    verifier = MagicMock(spec=Verifier)
+    event_stream = MagicMock(spec=EventStream)
+
+    agent = Agent(config, repo_map, llm_client, verifier, event_stream)
+
+    from span.core.agent import AgentState
+    state = AgentState(session_id="test", messages=[])
+
+    new_file = tmp_path / "new_file.py"
+
+    with patch.object(agent.apply_patch_tool, "execute") as mock_apply:
+        mock_apply.return_value = MagicMock(
+            success=True,
+            error=None,
+            reverse_diff=None
+        )
+
+        with patch.object(agent.verifier, "verify_patch") as mock_verify:
+            mock_verify.return_value = VerificationResult(passed=True, errors=[])
+
+            with patch.object(agent.verifier, "check_lint") as mock_lint:
+                mock_lint.return_value = VerificationResult(passed=True, errors=[])
+
+                tool_input = {"path": str(new_file), "diff": "@@ -0,0 +1 @@\n+print('hello')"}
+                result = agent._execute_patch_with_verification(tool_input, state)
+
+                assert isinstance(result, list)
+                assert "SUCCESS:" in result[0]["text"]
+                assert len(state.changes) == 1
 
 
 def test_finalize_with_final_check_warnings(tmp_path: Path) -> None:

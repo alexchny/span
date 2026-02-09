@@ -143,7 +143,7 @@ def test_execute_patch_with_verification_success(tmp_path: Path) -> None:
 
             assert isinstance(result, list)
             assert len(result) > 0
-            assert "applied and verified" in result[0]["text"].lower()
+            assert "applied" in result[0]["text"].lower()
             assert len(state.changes) == 1
             assert state.changes[0].path == str(test_file)
 
@@ -166,9 +166,9 @@ def test_execute_patch_with_verification_failure(tmp_path: Path) -> None:
     def mock_execute_side_effect(path: str, diff: str) -> MagicMock:
         call_count[0] += 1
         if call_count[0] == 1:
-            return MagicMock(success=True, reverse_diff="- new\n+ old", error=None)
+            return MagicMock(success=True, reverse_diff="- new\n+ old", error=None, original_content="old content")
         else:
-            return MagicMock(success=True, reverse_diff=None, error=None)
+            return MagicMock(success=True, reverse_diff=None, error=None, original_content=None)
 
     with patch.object(agent.apply_patch_tool, "execute") as mock_apply:
         mock_apply.side_effect = mock_execute_side_effect
@@ -186,7 +186,7 @@ def test_execute_patch_with_verification_failure(tmp_path: Path) -> None:
             assert "reverted" in result[0]["text"].lower()
             assert "syntax error" in result[0]["text"].lower()
             assert len(state.changes) == 0
-            assert mock_apply.call_count == 2
+            assert mock_apply.call_count == 1
 
 
 def test_revert_all_changes() -> None:

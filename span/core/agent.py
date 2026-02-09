@@ -1,6 +1,7 @@
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from span.config import Config
@@ -102,6 +103,176 @@ class Agent:
 
         return state
 
+    def continue_turn(
+        self, state: AgentState, message: str, plan_mode: bool = False
+    ) -> AgentState:
+        state.messages.append({"role": "user", "content": message})
+
+        if plan_mode:
+            plan = self._get_plan_only(state)
+            print(f"\n{plan}\n")
+            response = input("Execute this plan? [y/N]: ").strip().lower()
+            if response != "y":
+                state.messages.append(
+                    {"role": "assistant", "content": [{"type": "text", "text": plan}]}
+                )
+                return state
+
+        self._execute_loop(state)
+        return state
+
+    def _get_plan_only(self, state: AgentState) -> str:
+        last_message = state.messages[-1]["content"]
+
+        response = self.llm_client.send_message(
+            system=PLAN_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": last_message}],
+            tools=[],
+        )
+
+        return self.llm_client.extract_text(response)
+
+    def chat(
+        self,
+        state: AgentState,
+        message: str,
+        thinking_mode: str = "off",
+        renderer: Any = None,
+    ) -> str:
+        state.messages.append({"role": "user", "content": message})
+
+        tools = [
+            self.read_file_tool.to_anthropic_tool(),
+            self.apply_patch_tool.to_anthropic_tool(),
+            self.run_shell_tool.to_anthropic_tool(),
+        ]
+
+        response = self.llm_client.send_message(
+            system=EXECUTE_SYSTEM_PROMPT,
+            messages=state.messages,
+            tools=tools,
+        )
+
+        state.messages.append({"role": "assistant", "content": response.content})
+
+        response_text = ""
+        tool_results = []
+        had_successful_patch = False
+
+        for block in response.content:
+            if block.type == "text":
+                response_text += block.text
+            elif block.type == "tool_use":
+                tool_name = block.name
+                tool_input = block.input
+
+                if renderer:
+                    renderer.render_tool_call(tool_name, tool_input)
+
+                tool_call = {"name": tool_name, "input": tool_input}
+                result = self._execute_tool(tool_call, state)
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+
+                if renderer:
+                    renderer.render_tool_result(tool_name, result)
+
+                if tool_name == "apply_patch":
+                    for item in result:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text = item.get("text", "")
+                            if text.startswith("SUCCESS:"):
+                                had_successful_patch = True
+                                break
+
+        if had_successful_patch:
+            state.messages.append({"role": "user", "content": tool_results})
+            return response_text or "I've made the changes. Please review."
+
+        if tool_results:
+            state.messages.append({"role": "user", "content": tool_results})
+
+            follow_up = self.llm_client.send_message(
+                system=EXECUTE_SYSTEM_PROMPT,
+                messages=state.messages,
+                tools=tools,
+            )
+
+            state.messages.append({"role": "assistant", "content": follow_up.content})
+
+            return self._continue_chat_loop(state, follow_up, tools, renderer, thinking_mode, depth=1)
+
+        return response_text
+
+    def _continue_chat_loop(
+        self,
+        state: AgentState,
+        response: Any,
+        tools: list[dict],
+        renderer: Any,
+        thinking_mode: str,
+        depth: int = 0,
+    ) -> str:
+        if depth > 30:
+            return "[Reached tool call limit - try breaking your request into smaller steps]"
+
+        response_text = ""
+        tool_results = []
+        had_successful_patch = False
+
+        for block in response.content:
+            if block.type == "text":
+                response_text += block.text
+            elif block.type == "tool_use":
+                tool_name = block.name
+                tool_input = block.input
+
+                if renderer:
+                    renderer.render_tool_call(tool_name, tool_input)
+
+                tool_call = {"name": tool_name, "input": tool_input}
+                result = self._execute_tool(tool_call, state)
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+
+                if renderer:
+                    renderer.render_tool_result(tool_name, result)
+
+                if tool_name == "apply_patch":
+                    for item in result:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text = item.get("text", "")
+                            if text.startswith("SUCCESS:"):
+                                had_successful_patch = True
+                                break
+
+        if had_successful_patch:
+            state.messages.append({"role": "user", "content": tool_results})
+            return response_text or "I've made the changes. Please review."
+
+        if tool_results:
+            state.messages.append({"role": "user", "content": tool_results})
+
+            follow_up = self.llm_client.send_message(
+                system=EXECUTE_SYSTEM_PROMPT,
+                messages=state.messages,
+                tools=tools,
+            )
+
+            state.messages.append({"role": "assistant", "content": follow_up.content})
+
+            return self._continue_chat_loop(state, follow_up, tools, renderer, thinking_mode, depth + 1)
+
+        return response_text
+
     def _generate_session_id(self) -> str:
         return str(uuid.uuid4())[:8]
 
@@ -183,6 +354,7 @@ class Agent:
             tool_calls = self.llm_client.extract_tool_calls(response)
             tool_results = []
             hit_limit = False
+            had_successful_patch = False
 
             for tool_call in tool_calls:
                 state.tool_call_count += 1
@@ -217,7 +389,19 @@ class Agent:
                     result=result,
                 )
 
-            if hit_limit:
+                if tool_call["name"] == "apply_patch":
+                    for item in result:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            text = item.get("text", "")
+                            if text.startswith("SUCCESS:"):
+                                had_successful_patch = True
+                                break
+                    if had_successful_patch:
+                        break
+
+            if hit_limit or had_successful_patch:
+                if tool_results:
+                    state.messages.append({"role": "user", "content": tool_results})
                 break
 
             if tool_results:
@@ -257,11 +441,10 @@ class Agent:
     def _execute_patch_with_verification(
         self, tool_input: dict, state: AgentState
     ) -> list[dict[str, Any]]:
-        from pathlib import Path
-
         path = tool_input["path"]
         diff = tool_input["diff"]
-        file_path = Path(path)
+
+        file_path = self._resolve_to_repo_root(path)
         is_new_file = not file_path.exists()
 
         retry_count = state._retry_count.get(path, 0)
@@ -293,48 +476,65 @@ class Agent:
             print(f"  ✗ Patch failed ({error_hint})")
             return [{"type": "text", "text": f"Error: {apply_result.error}"}]
 
-        verification = self.verifier.verify_patch(path)
+        verification = self.verifier.verify_patch(path, strict=False)
 
         if verification.passed:
-            if apply_result.reverse_diff is None:
+            if apply_result.reverse_diff is None and not is_new_file:
                 return [{"type": "text", "text": "Error: Failed to generate reverse diff"}]
 
-            print("  ✓ Verified")
+            lint_result = self.verifier.check_lint([path])
+            if lint_result.passed:
+                print("  ✓ Verified")
+            else:
+                print("  ✓ Applied (with lint warnings)")
+
             if is_new_file:
                 state._created_files.add(path)
             state._retry_count.pop(path, None)
+
+            reverse_diff = apply_result.reverse_diff or ""
             state.changes.append(
                 ChangeOp(
                     path=path,
                     forward_diff=diff,
-                    reverse_diff=apply_result.reverse_diff,
+                    reverse_diff=reverse_diff,
                     timestamp=time.time(),
                     step_id=state.patch_attempt_count,
                 )
             )
-            return [
-                {
-                    "type": "text",
-                    "text": f"SUCCESS: Patch to {path} applied and verified. Task complete - stop now and let the user review the changes.",
-                }
-            ]
+
+            result_msg = f"SUCCESS: Patch to {path} applied."
+            if not lint_result.passed:
+                first_error = lint_result.errors[0] if lint_result.errors else ""
+                if first_error:
+                    short_err = first_error.split('\n')[1] if '\n' in first_error else first_error[:100]
+                    result_msg += f" Note: has lint warnings ({short_err})"
+            result_msg += " Task complete - stop now and let the user review the changes."
+
+            return [{"type": "text", "text": result_msg}]
         else:
             state._retry_count[path] = retry_count + 1
             first_error = verification.errors[0] if verification.errors else "unknown"
             short_error = first_error[:60] + "..." if len(first_error) > 60 else first_error
             print(f"  ✗ Verification failed: {short_error}")
 
-            if apply_result.reverse_diff:
-                revert_result = self.apply_patch_tool.execute(
-                    path=path, diff=apply_result.reverse_diff
-                )
-                if not revert_result.success:
+            if apply_result.original_content is not None and isinstance(apply_result.original_content, str):
+                try:
+                    file_path.write_text(apply_result.original_content)
+                    print("  ↩ Restored original file")
+                except OSError as e:
                     self.event_stream.append(
                         "revert_failed",
                         session_id=state.session_id,
                         path=path,
-                        error=revert_result.error,
+                        error=str(e),
                     )
+            elif is_new_file:
+                try:
+                    file_path.unlink()
+                    print("  ↩ Removed failed new file")
+                except OSError:
+                    pass
 
             state.last_errors = verification.errors
             error_msg = "\n".join(verification.errors)
@@ -344,6 +544,16 @@ class Agent:
                     "text": f"Patch reverted due to verification failure:\n{error_msg}",
                 }
             ]
+
+    def _resolve_to_repo_root(self, path: str) -> Path:
+        p = Path(path)
+        if p.is_absolute():
+            return p
+        current = Path.cwd()
+        for parent in [current] + list(current.parents):
+            if (parent / "span.yaml").exists() or (parent / ".git").exists():
+                return parent / path
+        return p.resolve()
 
     def _apply_reverse_diff(self, path: str, reverse_diff: str) -> bool:
         result = self.apply_patch_tool.execute(path=path, diff=reverse_diff)
